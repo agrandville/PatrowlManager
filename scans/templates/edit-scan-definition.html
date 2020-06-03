@@ -165,9 +165,9 @@ label.radio {
             All
           </label>
           {% for engine in scan_engines %}
-          <label class="btn btn-primary" engineId="{{ engine.id }}">
-            <input type="radio" autocomplete="off" name='engine_name'>{{ engine.name }}
-          </label>
+            <label class="btn btn-primary" engineId="{{ engine.id }}">
+              <input type="radio" autocomplete="off" name='engine_name'>{{ engine.name }}
+            </label>
           {% endfor %}
         </div>
       </div>
@@ -289,7 +289,7 @@ function InitForm(){
   UpdatePolicieslist({{ scan_def.engine_type_id }})
 
   // - Filter by category
-  // Todo: Filter by category
+  // @todo
 
   // - Scan policy
   $("input:radio[name='scan_type'][value='{{scan_def.scan_type}}']").attr("checked", "checked");
@@ -301,6 +301,7 @@ function InitForm(){
   engine_list = {{scan_engines_json|safe}}
   $('select#id_engine').append("<option value='-1' selected>---- random (by default) ----</option>");
   for (i = 0; i< engine_list.length; i++){
+    /*
     if(engine_list[i]["engine__name"] == "{{scan_def.engine_type.name}}"){
       $('select#id_engine').append($('<option>', {
           value: engine_list[i]['id'],
@@ -308,6 +309,7 @@ function InitForm(){
         })
       );
     }
+      */
   }
   if("{{scan_def.engine}}" != "None"){
     $("select#id_engine option[value='{{scan_def.engine.id}}']").attr('selected','selected');

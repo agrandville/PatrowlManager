@@ -7,6 +7,7 @@ from django.contrib.auth.models import User
 from django.shortcuts import get_object_or_404
 from celery import shared_task
 from celery.task.control import revoke
+from celery.utils.log import get_task_logger
 from .models import EngineInstance, Engine, EnginePolicyScope, EnginePolicy
 from findings.models import Finding, RawFinding
 from assets.models import Asset, AssetGroup
@@ -19,8 +20,11 @@ import time
 import datetime
 import random
 import uuid
+import hashlib
 import os
 from copy import deepcopy
+
+logger = get_task_logger(__name__)
 
 NB_MAX_RETRIES = 5
 SLEEP_RETRY = 5
@@ -30,6 +34,7 @@ TIMEOUT = settings.SCAN_TIMEOUT  # 10 minutes by default
 
 @shared_task(bind=True, acks_late=True)
 def test_task(self, queue_name):
+    # print ("task: test connexion on queue '{}'!".format(queue_name))
     Event.objects.create(
         message="[EngineTasks/test_task()] Test celery+RabbitMQ connexion on queue '{}'.".format(queue_name),
         type="DEBUG", severity="INFO",
@@ -40,6 +45,7 @@ def test_task(self, queue_name):
 
 @shared_task(bind=True, acks_late=True)
 def refresh_engines_status_task(self):
+    # print ("task: starting refstartscan_taskresh_engines_status_task !")
     for engine in EngineInstance.objects.filter(enabled=True).only("api_url", "status"):
         try:
             resp = requests.get(
@@ -60,6 +66,8 @@ def refresh_engines_status_task(self):
 
 @shared_task(bind=True, acks_late=True)
 def get_engine_status_task(self, engine_id):
+    logger.info("task: starting get_engine_status_task !")
+    # print ("task: starting get_engine_status_task !")
     for engine in EngineInstance.objects.filter(id=engine_id).only("api_url", "status"):
         try:
             resp = requests.get(
@@ -79,6 +87,7 @@ def get_engine_status_task(self, engine_id):
 
 @shared_task(bind=True, acks_late=True)
 def get_engine_info_task(self, engine_id):
+    print ("task: starting get_engine_info_task !")
     for engine in EngineInstance.objects.filter(id=engine_id).only("api_url", "status"):
         try:
             resp = requests.get(
@@ -93,7 +102,8 @@ def get_engine_info_task(self, engine_id):
             engine.status = "ERROR"
 
         engine.save()
-    return True
+    return False
+    #return True
 
 
 @shared_task(bind=True, acks_late=True)
@@ -113,7 +123,7 @@ def importfindings_task(self, report_filename, owner_id, engine, min_level):
             "missing": 0, "new": 0, "total": 0
         }
 
-        Event.objects.create(message='[EngineTasks/importfindings_task()] engine: nessus', type="INFO", severity="DEBUG")
+        Event.objects.create(message='[EngineTasks/importfindings_task()] engine: nessus', type="INFO", severity="INFO")
         try:
             import cElementTree as ET
         except ImportError:
@@ -145,7 +155,7 @@ def importfindings_task(self, report_filename, owner_id, engine, min_level):
                             if not net.is_valid_ip(asset.get('host-ip', asset.get('name'))):
                                 Event.objects.create(
                                     message="[EngineTasks/importfindings_task()] finding not added.",
-                                    type="DEBUG", severity="DEBUG",
+                                    type="DEBUG", severity="INFO",
                                     description="No ip address for asset {} found".format(asset.get('name'))
                                 )
                                 summary['missing'] += 1
@@ -153,25 +163,25 @@ def importfindings_task(self, report_filename, owner_id, engine, min_level):
                             if 'pluginName' in report_item.attrib:
                                 summary['total'] += 1
                                 finding = {
-                                    "target": {
-                                        "addr": [asset.get('host-ip', asset.get('name'))]
-                                    },
-                                    "metadata": {
-                                        "risk": {
-                                            "cvss_base_score": "0.0"
-                                        },
-                                        "vuln_refs": {},
-                                        "links": list(),
-                                        "tags": ["nessus"]
-                                    },
-                                    "title": report_item.attrib['pluginName'],
-                                    "type": "nessus_manual_import",
-                                    "confidence": "3",
-                                    "severity": "info",
-                                    "description": "n/a",
-                                    "solution": "n/a",
-                                    "raw": None
-                                }
+                                            "target": {
+                                                "addr": [asset.get('host-ip', asset.get('name'))]
+                                            },
+                                            "metadata": {
+                                                "risk": {
+                                                    "cvss_base_score": "0.0"
+                                                },
+                                                "vuln_refs": {},
+                                                "links": list(),
+                                                "tags": list()
+                                            },
+                                            "title": report_item.attrib['pluginName'],
+                                            "type": "Vuln",
+                                            "confidence": "3",
+                                            "severity": "info",
+                                            "description": "n/a",
+                                            "solution": "n/a",
+                                            "raw": None
+                                        }
                                 if int(report_item.attrib['severity']) < min_level:
                                     # if below min level descard finding
                                     summary['missing'] += 1
@@ -218,11 +228,11 @@ def importfindings_task(self, report_filename, owner_id, engine, min_level):
                                         finding['metadata']['risk']['patch_publication_date'] = param.text
 
                                     if param.tag == 'cve':
-                                        finding['metadata']['vuln_refs']['CVE'] = param.text.split(', ')
+                                        finding['metadata']['vuln_refs']['cve'] = param.text
                                     if param.tag == 'bid':
-                                        finding['metadata']['vuln_refs']['BID'] = param.text.split(', ')
+                                        finding['metadata']['vuln_refs']['bid'] = param.text
                                     if param.tag == 'xref':
-                                        finding['metadata']['vuln_refs'][param.text.split(':')[0].upper()] = param.text.split(':')[1]
+                                        finding['metadata']['vuln_refs'][param.text.split(':')[0]] = param.text.split(':')[1]
                                     if param.tag == 'see_also':
                                         for link in param.text.split('\n'):
                                             finding['metadata']['links'].append(link)
@@ -255,7 +265,7 @@ def importfindings_task(self, report_filename, owner_id, engine, min_level):
             _import_findings(findings=data, scan=scan)
         except Exception as e:
             Event.objects.create(message="[EngineTasks/importfindings_task()] Error importing findings.", description="{}".format(e.message),
-                type="ERROR", severity="ERROR")
+                         type="ERROR", severity="ERROR")
             return False
     else:
         # has to be json
@@ -266,7 +276,7 @@ def importfindings_task(self, report_filename, owner_id, engine, min_level):
             _import_findings(findings=data['issues'], scan=Scan.objects.filter(title='test').first())
         except Exception as e:
             Event.objects.create(message="[EngineTasks/importfindings_task()] Error importing findings.", description="{}".format(e.message),
-                type="ERROR", severity="ERROR")
+                         type="ERROR", severity="ERROR")
             return False
 
     return True
@@ -288,6 +298,8 @@ def stopscan_task(self, scan_id):
             scan.status = "error"
             scan.finished_at = timezone.now()
             scan.save()
+            # print("ERROR: something goes wrong in 'stopscan_task' (request_status_code={}, engine_error={})",
+            #        resp.status_code, json.loads(resp.text)['reason'])
             Event.objects.create(message="[EngineTasks/stopscan_task/{}] Error when stopping scan.".format(self.request.id),
                 type="ERROR", severity="ERROR", scan=scan, description="STATUS CODE={}, {}".format(resp.status_code, json.loads(resp.text)))
             return False
@@ -296,26 +308,28 @@ def stopscan_task(self, scan_id):
         scan.finished_at = timezone.now()
         scan.save()
         Event.objects.create(message="[EngineTasks/stopscan_task/{}] Error when stopping scan (exception).".format(self.request.id),
-            type="ERROR", severity="ERROR", scan=scan, description="{}".format(e.message))
+                     type="ERROR", severity="ERROR", scan=scan, description="{}".format(e.message))
         return False
 
     scan.status = "stopped"
     scan.finished_at = timezone.now()
     scan.save()
     Event.objects.create(message="[EngineTasks/stopscan_task/{}] Scan successfully stopped.".format(self.request.id),
-        type="INFO", severity="INFO", scan=scan)
+                 type="INFO", severity="INFO", scan=scan)
     return True
 
 
 @shared_task(bind=True, acks_late=True)
 def startscan_task(self, params):
+    logger.info("----Entering startscan_task() with params: {}".format(params))
+
     scan = Scan.objects.get(id=params['scan_params']['scan_id'])
     scan.status = "started"
     scan.started_at = timezone.now()
     scan.save()
 
     Event.objects.create(message="[EngineTasks/startscan_task/{}] Task started.".format(self.request.id),
-        type="INFO", severity="INFO", scan=scan)
+                 type="INFO", severity="INFO", scan=scan)
 
     # Check if the assets list is not empty
     if len(params['scan_params']['assets']) == 0:
@@ -359,6 +373,7 @@ def startscan_task(self, params):
     # -1- wait the engine come available for accepting scans (status=ready)
     retries = NB_MAX_RETRIES
     while _get_engine_status(engine=engine_inst) != "READY" and retries > 0:
+        # print("--waiting scanner ready: {}".format(_get_engine_status(engine=engine_inst)))
         time.sleep(1)
         retries -= 1
 
@@ -388,15 +403,16 @@ def startscan_task(self, params):
             if 'details' in json.loads(resp.text) and 'reason' in json.loads(resp.text)['details']:
                 response_reason = json.loads(resp.text)['details']['reason']
             Event.objects.create(message="[EngineTasks/startscan_task/{}] DuringScan - something goes wrong (response_status_code={}, response_status={}, response_details={}). Task aborted.".format(self.request.id, resp.status_code, json.loads(resp.text)['status'], response_reason),
-                description=str(resp.text), type="ERROR", severity="ERROR", scan=scan)
+                         description=str(resp.text), type="ERROR", severity="ERROR", scan=scan)
             return False
     except requests.exceptions.RequestException as e:
         scan.status = "error"
         scan.finished_at = timezone.now()
         scan.save()
-        Event.objects.create(message="[EngineTasks/startscan_task/{}] DuringScan - something goes wrong. Task aborted.".format(self.request.id),
-            description=str(e), type="ERROR", severity="ERROR", scan=scan)
-
+        Event.objects.create(message="[EngineTasks/startscan_task/{}] DuringScan - something goes wrong ({}). Task aborted.".format(self.request.id, e),
+                     description=str(e), type="ERROR", severity="ERROR", scan=scan)
+        # Event.objects.create(message="[EngineTasks/startscan_task/{}] DuringScan - something goes wrong (request_status_code={}). Task aborted.".format(self.request.id, resp.status_code),
+        #              description=json.loads(resp.text)['status'], type="ERROR", severity="ERROR", scan=scan)
         return False
 
     # -3- wait the engine come available for accepting scans (status=ready)
@@ -418,34 +434,35 @@ def startscan_task(self, params):
         scan.status = "error"
         scan.finished_at = timezone.now()
         scan.save()
+        # print("ERROR: startscan_task/scaninprogress - max_retries ({}) reached.".format(retries))
         Event.objects.create(message="[EngineTasks/startscan_task/{}] DuringScan - max_retries ({}) reached. Task aborted.".format(self.request.id, retries),
             type="ERROR", severity="ERROR", scan=scan)
         return False
 
     Event.objects.create(message="[EngineTasks/startscan_task/{}] AfterScan - scan report is now available: {}.".format(self.request.id, str(engine_inst.api_url)+"getreport/"+str(scan.id)),
-                         type="DEBUG", severity="DEBUG", scan=scan)
+                         type="DEBUG", severity="INFO", scan=scan)
     Event.objects.create(message="[EngineTasks/startscan_task/{}] AfterScan - findings are now available: {}.".format(self.request.id, str(engine_inst.api_url)+"getfindings/"+str(scan.id)),
-                         type="DEBUG", severity="DEBUG", scan=scan)
+                         type="DEBUG", severity="INFO", scan=scan)
 
     #Todo: change to wait the report becomes available
-    time.sleep(5)  # wait the scan process finish to write the report
+    time.sleep(5) # wait the scan process finish to write the report
 
     # -4- get the results (findings)
     try:
         resp = requests.get(url=str(engine_inst.api_url)+"getfindings/"+str(scan.id), proxies=PROXIES)
-        if resp.status_code != 200 or json.loads(resp.text)['status'] == "error":
+        if resp.status_code != 200 or json.loads(resp.text)['status'].lower() == "error":
             scan.status = "error"
             scan.finished_at = timezone.now()
             scan.save()
-            Event.objects.create(message="[EngineTasks/startscan_task/{}] AfterScan - something goes wrong in 'getfindings' call (request_status_code={}). Task aborted.".format(self.request.id, resp.status_code),
-                type="ERROR", severity="ERROR", scan=scan, description="{}".format(resp.text))
+            Event.objects.create(message="[EngineTasks/startscan_task/{}] AfterScan - something goes wrong in 'getfindings' call (request_status_code={}, engine_error={}). Task aborted.".format(self.request.id, resp.status_code, json.loads(resp.text)['reason']),
+                type="ERROR", severity="ERROR", scan=scan)
             return False
     except Exception as e:
         scan.status = "error"
         scan.finished_at = timezone.now()
         scan.save()
         Event.objects.create(message="[EngineTasks/startscan_task/{}] AfterScan - something goes wrong in 'getfindings' call (request_status_code={}). Task aborted.".format(self.request.id, resp.status_code),
-            type="ERROR", severity="ERROR", scan=scan, description="{}\n{}".format(e, resp.text))
+            type="ERROR", severity="ERROR", scan=scan, description="{}".format(e.message))
         return False
 
 
@@ -454,7 +471,7 @@ def startscan_task(self, params):
         _import_findings(findings=deepcopy(json.loads(resp.text)['issues']), scan=scan)
 
     except Exception as e:
-        Event.objects.create(message="[EngineTasks/startscan_task/{}] AfterScan - something goes wrong in '_import_findings' call. Task aborted.".format(self.request.id), description="{}".format(e),
+        Event.objects.create(message="[EngineTasks/startscan_task/{}] AfterScan - something goes wrong in '_import_findings' call. Task aborted.".format(self.request.id), description="{}".format(e.message),
             type="ERROR", severity="ERROR", scan=scan)
         scan.status = "error"
         scan.finished_at = timezone.now()
@@ -634,6 +651,7 @@ def start_periodic_scan_task(self, params):
               resp.status_code, json.loads(resp.text)['status'])
         return False
 
+
     # -5- import the results in DB
     try:
         _import_findings(findings=deepcopy(json.loads(resp.text)['issues']), scan=scan)
@@ -641,6 +659,7 @@ def start_periodic_scan_task(self, params):
         print (e.__doc__)
         print (e.message)
         return False
+
 
     # -6- get and store the report
     try:
@@ -679,6 +698,8 @@ def start_periodic_scan_task(self, params):
 
 
 def _get_engine_status(engine):
+    # print("I'm inside the _get_engine_status with args '{}'".format(engine))
+
     engine_status = "undefined"
 
     try:
@@ -697,6 +718,7 @@ def _get_engine_status(engine):
 
 
 def _get_scan_status(engine, scan_id):
+    # print("I'm inside the _get_scan_status with args 'engine={}, scan_id={}'".format(engine, scan_id))
     scan_status = "undefined"
 
     try:
@@ -741,7 +763,7 @@ def _create_asset_on_import(asset_value, scan, asset_type='unknown', parent=None
         elif net._is_valid_url(asset_value):
             asset_type = "url"
         else:
-            asset_type = "keyword"  # default :/
+            asset_type = "fqdn"  # default :/
         name = asset_value
         criticity = 'medium'
         owner = User.objects.filter(username='admin').first()
@@ -770,209 +792,29 @@ def _create_asset_on_import(asset_value, scan, asset_type='unknown', parent=None
 
     # Creation/Update of the AssetGroup
     if parent is not None:
-        Event.objects.create(message="[EngineTasks/_create_asset_on_import()] Looking for a group named : {}".format(parent), type="DEBUG", severity="INFO", scan=scan)
-        asset_group = AssetGroup.objects.filter(name="{} assets".format(parent)).first()
-        if asset_group is None:   # Create an asset group dynamically
-            Event.objects.create(message="[EngineTasks/_create_asset_on_import()] Create a group named : {}".format(parent), type="DEBUG", severity="INFO", scan=scan)
-            assetgroup_args = {
+       Event.objects.create(message="[EngineTasks/_create_asset_on_import()] Looking for a group named : {}".format(parent), type="DEBUG", severity="INFO", scan=scan)
+       asset_group = AssetGroup.objects.filter(name="{} assets".format(parent)).first()
+       if asset_group is None:   # Create an asset group dynamically
+           Event.objects.create(message="[EngineTasks/_create_asset_on_import()] Create a group named : {}".format(parent), type="DEBUG", severity="INFO", scan=scan)
+           assetgroup_args = {
                'name': "{} assets".format(parent),
                'criticity': criticity,
                'description': "AssetGroup dynamically created",
                'owner': owner
-            }
-            asset_group = AssetGroup(**assetgroup_args)
-            asset_group.save()
+           }
+           asset_group = AssetGroup(**assetgroup_args)
+           asset_group.save()
 
-        Event.objects.create(message="[EngineTasks/_create_asset_on_import()] Add {} in group {}".format(asset, parent), type="DEBUG", severity="INFO", scan=scan)
-        # Add the asset to the new group
-        asset_group.assets.add(asset)
-        asset_group.save()
+       Event.objects.create(message="[EngineTasks/_create_asset_on_import()] Add {} in group {}".format(asset, parent), type="DEBUG", severity="INFO", scan=scan)
+       # Add the asset to the new group
+       asset_group.assets.add(asset)
+       asset_group.save()
 
-        # Caculate the risk grade
-        asset_group.calc_risk_grade()
-        asset_group.save()
+       # Caculate the risk grade
+       asset_group.calc_risk_grade()
+       asset_group.save()
 
     return asset
-
-
-def _import_findings_save(findings, scan, engine_name=None, engine_id=None, owner_id=None):
-    from timeit import default_timer as timer
-
-    scan_id = None
-    if scan:
-        Event.objects.create(message="[EngineTasks/_import_findings()/scan_id={}] Importing findings for scan '{}'.".format(scan.id, scan.title), type="DEBUG", severity="INFO", scan=scan)
-        scan_id = scan.id
-    else:
-        Event.objects.create(message="[EngineTasks/_import_findings()/direct] Importing findings manually.", type="DEBUG", severity="INFO")
-        scan_id = 0
-
-    scopes = scan.engine_policy.scopes.all()
-    fid = 0
-    timer_finding_in_findings = timer()
-    for finding in findings:
-        fid += 1
-        timer_finding_iteration = timer()
-        print("[DEBUG] New finding iteration: {}".format(fid))
-        # get the hostnames received and check if they are known in the user' assets
-        assets = []
-
-        for addr in list(finding['target']['addr']):
-            asset = Asset.objects.filter(value=addr).first()
-            if asset is None:  # asset unknown by the manager
-                if "parent" not in finding["target"]:
-                    finding["target"]["parent"] = None
-                asset = _create_asset_on_import(asset_value=addr, scan=scan, parent=finding["target"]["parent"])
-            if asset:
-                assets.append(asset)
-            if asset and not scan.assets.filter(value=asset.value):
-                scan.assets.add(asset)
-
-        # Prepare metadata fields
-        risk_info = {}
-        vuln_refs = {}
-        links = []
-        tags = []
-        if 'metadata' in finding.keys():
-            if 'risk' in finding['metadata'].keys():
-                risk_info = finding['metadata']['risk']
-            if 'vuln_refs' in finding['metadata'].keys():
-                vuln_refs = finding['metadata']['vuln_refs']
-            if 'links' in finding['metadata'].keys():
-                links = finding['metadata']['links']
-            if 'tags' in finding['metadata'].keys():
-                tags = finding['metadata']['tags']
-
-        # Update default values for risk.cvss_base_score and risk.vuln_publication_date if not set
-        if 'cvss_base_score' not in risk_info.keys():
-            cvss_base_score = 0.0
-            if finding['severity'] == 'critical':
-                cvss_base_score = 9.0
-            if finding['severity'] == "high":
-                cvss_base_score = 7.5
-            if finding['severity'] == "medium":
-                cvss_base_score = 5.0
-            if finding['severity'] == "low":
-                cvss_base_score = 4.0
-            risk_info.update({"cvss_base_score": cvss_base_score})
-        else:
-            # ensure it's a float
-            risk_info.update({"cvss_base_score": float(risk_info["cvss_base_score"])})
-        if 'vuln_publication_date' not in risk_info.keys():
-            risk_info.update({"vuln_publication_date": datetime.datetime.today().strftime('%Y/%m/%d')})
-
-        raw_data = {}
-        if 'raw' in finding.keys():
-            raw_data = finding['raw']
-
-        for asset in assets:
-            # update scan_summary
-            # scan_summary.update({
-            #     "total": scan_summary['total'] + 1,
-            #     finding['severity']: scan_summary[finding['severity']] + 1
-            # })
-
-            # Store finding in the RawFinding table
-            new_raw_finding = RawFinding.objects.create(
-                asset       = asset,
-                asset_name  = asset.value,
-                scan        = scan,
-                owner       = scan.owner,
-                title       = finding['title'],
-                type        = finding['type'],
-                confidence  = finding['confidence'],
-                severity    = finding['severity'],
-                description = finding['description'],
-                solution    = finding['solution'],
-                status      = "new",
-                engine_type = scan.engine_type.name,
-                risk_info   = risk_info,
-                vuln_refs   = vuln_refs,
-                links       = links,
-                tags        = tags,
-                raw_data    = raw_data
-                #found_at = ???
-            )
-            new_raw_finding.save()
-
-            # Add the engine policy scopes
-            for scope in scopes:
-                new_raw_finding.scopes.add(scope.id)
-            new_raw_finding.save()
-
-            # Check if this finding is new
-            # f = Finding.objects.filter(
-            #     hash=hashlib.sha1(str(asset.value).encode('utf-8')+str(finding['title']).encode('utf-8')).hexdigest()).first()
-
-            f = Finding.objects.filter(asset=asset, title=finding['title']).only('checked_at', 'status').first()
-
-            if f:
-                f.checked_at = timezone.now()
-                f.save()
-                new_raw_finding.status = f.status
-                new_raw_finding.save()
-            else:
-                # Create a new finding:
-                Event.objects.create(
-                    message="[EngineTasks/_import_findings()/scan_id={}] New finding: {}".format(scan_id, finding['title']),
-                    description="Asset: {}\nFinding: {}".format(asset.value, finding['title']),
-                    type="DEBUG", severity="INFO", scan=scan)
-                new_finding = Finding.objects.create(
-                    raw_finding = new_raw_finding,
-                    asset       = asset,
-                    asset_name  = asset.value,
-                    scan        = scan,
-                    owner       = scan.owner,
-                    title       = finding['title'],
-                    type        = finding['type'],
-                    confidence  = finding['confidence'],
-                    severity    = finding['severity'],
-                    description = finding['description'],
-                    solution    = finding['solution'],
-                    status      = "new",
-                    engine_type = scan.engine_type.name,
-                    risk_info   = risk_info,
-                    vuln_refs   = vuln_refs,
-                    links       = links,
-                    tags        = tags,
-                    raw_data    = raw_data
-                )
-                new_finding.save()
-
-                # Add the engine policy scopes
-                for scope in scopes:
-                    new_finding.scopes.add(scope.id)
-                new_finding.save()
-
-                # Evaluate alerting rules
-                try:
-                    new_finding.evaluate_alert_rules(trigger='auto')
-                except Exception as e:
-                    Event.objects.create(message="[EngineTasks/_import_findings()/scan_id={}] Error in alerting".format(scan_id),
-                        type="ERROR", severity="ERROR", scan=scan, description=str(e))
-
-        print("[DEBUG][fid={}] End of finding iteration. Elapsed: {}".format(fid, timer() - timer_finding_iteration))
-
-    print("[DEBUG] End of finding_in_findings. Elapsed: {}".format(timer() - timer_finding_in_findings))
-
-    print("[DEBUG] Start of scan_update_sumary.")
-    timer_scan_update_sumary = timer()
-    scan.save()
-    scan.update_sumary()
-    print("[DEBUG] End of scan_update_sumary. Elapsed: {}".format(timer() - timer_scan_update_sumary))
-
-    print("[DEBUG] Start of asset_calc_risk_grade.")
-    timer_asset_calc_risk_grade = timer()
-    for a in scan.assets.all():
-        # Reevaluate the risk level of the asset on new risk
-        # a.evaluate_risk()
-        a.calc_risk_grade(update_groups=True)
-    print("[DEBUG] End of asset_calc_risk_grade. Elapsed: {}".format(timer() - timer_asset_calc_risk_grade))
-
-    # @Todo: Revaluate the risk level of all asset groups
-
-    scan.save()
-    Event.objects.create(message="[EngineTasks/_import_findings()/scan_id={}] Findings imported.".format(scan_id), type="INFO", severity="INFO", scan=scan)
-    return True
 
 
 def _import_findings(findings, scan, engine_name=None, engine_id=None, owner_id=None):
@@ -984,9 +826,6 @@ def _import_findings(findings, scan, engine_name=None, engine_id=None, owner_id=
         Event.objects.create(message="[EngineTasks/_import_findings()/direct] Importing findings manually.", type="DEBUG", severity="INFO")
         scan_id = 0
 
-    # Initialize scan_scopes
-    scan_scopes = scan.engine_policy.scopes.all()
-
     for finding in findings:
         # get the hostnames received and check if they are known in the user' assets
         assets = []
@@ -1070,26 +909,22 @@ def _import_findings(findings, scan, engine_name=None, engine_id=None, owner_id=
             new_raw_finding.save()
 
             # Add the engine policy scopes
-            for scope in scan_scopes:
-                new_raw_finding.scopes.add(scope.id)
+            for scope in scan.engine_policy.scopes.all():
+                new_raw_finding.scopes.add(EnginePolicyScope.objects.get(id=scope.id))
             new_raw_finding.save()
 
             # Check if this finding is new
-            # f = Finding.objects.filter(
-            #     hash=hashlib.sha1(str(asset.value).encode('utf-8')+str(finding['title']).encode('utf-8')).hexdigest()).first()
-            f = Finding.objects.filter(asset=asset, title=finding['title']).only('checked_at', 'status').first()
-
+            f = Finding.objects.filter(
+                hash=hashlib.sha1(str(asset.value).encode('utf-8')+str(finding['title']).encode('utf-8')).hexdigest()).first()
+            finding_state = "new"  # Default value
             if f:
                 f.checked_at = timezone.now()
-                f.save()
                 new_raw_finding.status = f.status
+                f.save()
                 new_raw_finding.save()
             else:
                 # Create a new finding:
-                Event.objects.create(
-                    message="[EngineTasks/_import_findings()/scan_id={}] New finding: {}".format(scan_id, finding['title']),
-                    description="Asset: {}\nFinding: {}".format(asset.value, finding['title']),
-                    type="DEBUG", severity="INFO", scan=scan)
+                Event.objects.create(message="[EngineTasks/_import_findings()/scan_id={}] New finding: {} ({})".format(scan_id, finding['title'], asset.value), type="DEBUG", severity="INFO", scan=scan)
                 new_finding = Finding.objects.create(
                     raw_finding = new_raw_finding,
                     asset       = asset,
@@ -1113,16 +948,15 @@ def _import_findings(findings, scan, engine_name=None, engine_id=None, owner_id=
                 new_finding.save()
 
                 # Add the engine policy scopes
-                for scope in scan_scopes:
-                    new_finding.scopes.add(scope.id)
+                for scope in scan.engine_policy.scopes.all():
+                    new_finding.scopes.add(EnginePolicyScope.objects.get(id=scope.id))
                 new_finding.save()
 
                 # Evaluate alerting rules
                 try:
                     new_finding.evaluate_alert_rules(trigger='auto')
                 except Exception as e:
-                    Event.objects.create(message="[EngineTasks/_import_findings()/scan_id={}] Error in alerting".format(scan_id),
-                        type="ERROR", severity="ERROR", scan=scan, description=str(e))
+                    Event.objects.create(message="[EngineTasks/_import_findings()/scan_id={}] error {}".format(e), type="DEBUG", severity="INFO", scan=scan)
     scan.save()
     scan.update_sumary()
 
@@ -1134,5 +968,5 @@ def _import_findings(findings, scan, engine_name=None, engine_id=None, owner_id=
     # @Todo: Revaluate the risk level of all asset groups
 
     scan.save()
-    Event.objects.create(message="[EngineTasks/_import_findings()/scan_id={}] Findings imported.".format(scan_id), type="INFO", severity="INFO", scan=scan)
+    Event.objects.create(message="[EngineTasks/_import_findings()/scan_id={}] Findings imported.".format(scan_id), type="DEBUG", severity="INFO", scan=scan)
     return True

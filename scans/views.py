@@ -180,6 +180,7 @@ def list_scans_view(request):
         ).only(
         "engine_type", "title", "status", "summary", "updated_at"
         ).order_by('-finished_at')
+    print("*********list_scans_view")
 
     paginator = Paginator(scan_list, 10)
     page = request.GET.get('page')

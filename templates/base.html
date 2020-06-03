@@ -20,7 +20,7 @@
   <link href="{% static 'css/jquery-ui.css' %}" rel="stylesheet">
 
   <!-- Core Scripts - Include with every page -->
-  <script src="{% static 'js/jquery.min.js' %}"></script>
+  <script src="{% static 'js/jquery.js' %}"></script>
   <script src="{% static 'js/jquery-ui.min.js' %}"></script>
   <script src="{% static 'js/bootstrap.min.js' %}"></script>
   <script src="{% static 'js/tether.min.js' %}"></script>
@@ -123,11 +123,12 @@
         if (running_scans > 1) {$('span.running-scans').append('&nbsp;-&nbsp;' + running_scans+' scans running <i class="glyphicon glyphicon-cog gly-spin"></i>');}
       });
     }
+	/*
     setInterval(function() {
       //refresh_engines_status();
-      setTimeout(refresh_engines_status(), 4000);
-    }, 5000);
-
+      setTimeout(refresh_engines_status(), 1000);
+    }, {{ settings.REFRESH_ENGINES_STATUS }});
+*/
   </script>
   {% endif %}
 

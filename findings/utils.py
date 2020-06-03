@@ -15,7 +15,7 @@ def _search_findings(request):
     filter_by_type_cond = request.GET.get('_type_cond', None)
     filter_by_severity = request.GET.get('_severity', None)
     filter_by_severity_cond = request.GET.get('_severity_cond', None)
-    # filter_by_startdate = request.GET.get('_startdate', None)
+    filter_by_update = request.GET.get('_update', None)
     # filter_by_enddate = request.GET.get('_enddate', None)
     filter_by_status = request.GET.get('_status', None)
     filter_by_status_cond = request.GET.get('_status_cond', None)
@@ -86,11 +86,19 @@ def _search_findings(request):
     if filter_by_scope:
         filters.update({"scan__engine_policy__scopes__in": filter_by_scope})
 
+    print("filter_by_update %s",filter_by_update)
     if str(filter_limit).isdigit():
         findings = Finding.objects.severity_ordering().filter(**filters).exclude(**excludes)[:int(filter_limit)]
     else:
-        findings = Finding.objects.severity_ordering().filter(**filters).exclude(**excludes).order_by(
-                 '-severity_order', 'asset_name', 'status', 'type', 'engine_type')
+        if filter_by_update == 'up':
+            findings = Finding.objects.severity_ordering().filter(**filters).exclude(**excludes).order_by(
+                '-updated_at')
+        elif filter_by_update == 'down':
+            findings = Finding.objects.severity_ordering().filter(**filters).exclude(**excludes).order_by(
+                'updated_at')
+        else:
+            findings = Finding.objects.severity_ordering().filter(**filters).exclude(**excludes).order_by(
+                '-severity_order', 'asset_name', 'status', 'type', 'engine_type')
     return findings.only("id", "asset_name", "title", "severity", "status", "engine_type", "updated_at")
 
 

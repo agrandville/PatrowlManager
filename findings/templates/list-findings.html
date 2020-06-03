@@ -80,7 +80,7 @@ function toggle(source, element) {
         <th data-field="severity">Severity</th>
         <th data-field="status">Status</th>
         <th data-field="engine_type">From</th>
-        <th data-field="updated_at">Last update</th>
+		  <th data-field="updated_at"><div id="update_order">Last update</div></th>
         <th data-field="actions">Actions</th>
       </tr>
     </thead>
@@ -409,6 +409,15 @@ function toggle(source, element) {
       url.searchParams.set("n", nb_rows);
       window.location = url.search;
     });
+
+	$('#update_order').click(function(e){
+		if(url.searchParams.get("_update")=='down')
+			url.searchParams.set("_update", "up");
+		else
+			url.searchParams.set("_update", "down");
+
+		window.location = url.search;
+		});
 
 		// Apply filters
 		$('button.btn-save-filters').on('click', function (e){

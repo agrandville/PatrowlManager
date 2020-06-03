@@ -14,9 +14,12 @@ import datetime
 import operator
 import copy
 import ast
+import logging
 
+logger = logging.getLogger(__name__)
 
 def homepage_dashboard_view(request):
+    logger.debug('****test')
     findings = Finding.objects.all().only("status", "severity")
     assets = Asset.objects.all()
     global_stats = {

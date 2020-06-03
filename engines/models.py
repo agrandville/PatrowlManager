@@ -30,7 +30,7 @@ class Engine(models.Model):
     #     db_table = 'engines'
 
     def __str__(self):
-        return self.name
+        return self.name+","+self.description
 
     def save(self, *args, **kwargs):
 

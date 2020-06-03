@@ -24,7 +24,10 @@ import tempfile
 import zipfile
 import csv
 import tzlocal
+#from celery.utils.log import get_task_logger
+import logging
 
+logger = logging.getLogger(__name__)
 
 @api_view(['GET'])
 def get_scan_definitions_api(request):
@@ -177,6 +180,7 @@ def get_scans_stats_api(request):
 @api_view(['GET'])
 def get_scans_heatmap_api(request):
     data = {}
+    logger.info('****get_scans_heatmap_api')
     for scan in Scan.objects.all():
         data.update({scan.updated_at.astimezone(tzlocal.get_localzone()).strftime("%s"): 1})
     return JsonResponse(data)
@@ -391,7 +395,7 @@ def toggle_scan_def_status_api(request, scan_def_id):
 @api_view(['GET'])
 def run_scan_def_api(request, scan_def_id):
     scan_def = get_object_or_404(ScanDefinition, id=scan_def_id)
-
+    #logger.info('****run_scan_def_api')
     if scan_def.scan_type in ["single", "scheduled"]:
         _run_scan(scan_def_id, request.user.id)
         return JsonResponse({'status': 'success'})
