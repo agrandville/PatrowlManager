@@ -4,17 +4,21 @@ from django.contrib.auth.models import User
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django_celery_beat.models import PeriodicTask, IntervalSchedule
+from django.conf import settings
 from app.settings import SUPERVISORD_API_URL
 from .models import Scan, ScanDefinition, SCAN_STATUS
 from engines.models import EngineInstance, EnginePolicy
 from engines.tasks import startscan_task
 from assets.models import Asset, AssetGroup
+from events.models import Event
 
 # import xmlrpclib
 import xmlrpc.client
 import uuid
 import random
+import logging
 
+logger = logging.getLogger(__name__)
 
 def _update_celerybeat():
     print("INFO: Updating Celery Beat Scheduler...")
@@ -38,7 +42,7 @@ def _update_celerybeat():
 def _run_scan(scan_def_id, owner_id, eta=None):
     scan_def = get_object_or_404(ScanDefinition, id=scan_def_id)
     engine = None
-
+    
     if scan_def.engine:
         engine = scan_def.engine
     else:
@@ -56,7 +60,7 @@ def _run_scan(scan_def_id, owner_id, eta=None):
         owner=User.objects.get(id=owner_id)
     )
     scan.save()
-
+    
     if engine is None:
         scan.status = "error"
         scan.started_at = timezone.now()
@@ -104,14 +108,31 @@ def _run_scan(scan_def_id, owner_id, eta=None):
         "ignore_result": True
     }
 
+    
     if eta is not None:
         print("eta:", eta)
         scan_options.update({"eta": eta})
 
+    logger.info("start startscan_task.apply_async")
     # enqueue the task in the right queue
-    resp = startscan_task.apply_async(**scan_options)
-    scan.status = "enqueued"
-    scan.task_id = uuid.UUID(str(resp))
+    try:
+        resp = startscan_task.apply_async(**scan_options)
+
+        logger.info("startscan_task.apply_async")
+        scan.status = "enqueued"
+        scan.task_id = uuid.UUID(str(resp))
+        logger.info("task enqueued %s",scan_options)
+    except Exception as ex:
+        logger.error(ex)
+        scan.status = "error"
+        scan.started_at = timezone.now()
+        scan.finished_at = timezone.now()
+        scan.task_id = uuid.uuid1()
+        Event.objects.create(message="[EngineTasks/Create task failed calling {} reason {}".format(settings.RABBIT_HOSTNAME,str(ex)),
+                             type="INFO",
+                             severity="CRITICAL",
+                             scan=scan)
+
     scan.save()
 
     return True

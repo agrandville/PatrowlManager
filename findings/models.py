@@ -40,6 +40,12 @@ FINDING_STATUS = (
 
 
 class FindingManager(models.Manager):
+    def update_ordering(self, *args, **kwargs):
+        """Sort patterns by preferred order of update."""
+        qs = self.get_queryset().filter(*args, **kwargs)
+        qs = qs.order_by('updated_at')
+        return qs
+
     def severity_ordering(self, *args, **kwargs):
         """Sort patterns by preferred order of finding severities."""
         qs = self.get_queryset().filter(*args, **kwargs)

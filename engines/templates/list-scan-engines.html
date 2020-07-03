@@ -46,7 +46,7 @@
           <span class="glyphicon glyphicon-repeat"></span></button>
         <button type="button" class="btn btn-danger btn-xs" data-toggle="modal" data-target="#modal-delete-engine"
            engine-id="{{ engine.id }}" engine-name="{{ engine.name }}@{{ engine.api_url}}">
-          <span class="glyphicon glyphicon-remove"></span></button>
+          <span class="glyphicon glyphicon-remove"></button>
         {% if engine.enabled %}
         <button type="button" class="btn btn-warning dropdown-toggle btn-xs btn-change-status" aria-haspopup="true" aria-expanded="false" engine-id="{{ engine.id }}">
           Disable</button>
@@ -70,7 +70,7 @@
   {% if messages %}
   <ul class="messages">
       {% for message in messages %}
-      <li>{% if message.tags %} class="{{ message.tags }}"{% endif %}>{{ message }}</li>
+      <li{% if message.tags %} class="{{ message.tags }}"{% endif %}>{{ message }}</li>
       {% endfor %}
   </ul>
   {% endif %}
@@ -121,7 +121,7 @@
         <div id="info-engine">
           <!-- Content -->
         </div>
-        <button type="button" class="btn btn-xs btn-primary" data-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-xs btn-primary" data-dismiss="modal">Cancel</a></button>
       </div>
     </div>
   </div>
@@ -134,26 +134,28 @@
 
     // Info engine modal
     $("#modal-info-engine").on('show.bs.modal', function (e) {
+   try{
       engine_id = e.relatedTarget.getAttribute('engine-id');
       xhr = $.ajax({
         url: "{% url 'info_engine_api' 0 %}".replace("0", engine_id),
         method: "GET",
         dataType: 'json',
+        timeout: 5000,
         beforeSend: function(){
           $("div#info-engine").html("Loading...");
         },
         success: function(data, textStatus, jqXHR){
           info_data = "Engine: <b>"+data["engine"]["name"]+"</b><br/>";
           info_data+= "API URL: <b>"+data["engine"]["api_url"]+"</b><br/>";
+          info_data+= "Nb scans: <b>"+data["nb_scans"]+"</b><br/>";
 
           if(data["engine_infos"]["status"] == "ERROR") {
             info_data+= "Oper status: <b>ERROR</b><br/>";
             if(data["engine_infos"]["details"]){
               info_data+= "Request: <b>"+data["engine_infos"]["details"]["request"]+"</b></br>"
               info_data+= "Reason: <b>"+data["engine_infos"]["details"]["reason"]+"</b></br>"
-            }
+              }
           } else {
-            info_data+= "Nb scans: <b>"+data["nb_scans"]+"</b><br/>";
             info_data+= "Oper status: <b>"+data["engine_infos"]["engine_config"]["status"]+"</b><br/>";
             info_data+= "Version: <b>"+data["engine_infos"]["engine_config"]["version"]+"</b><br/>";
             info_data+= "Description: <b>"+data["engine_infos"]["engine_config"]["description"]+"</b><br/>";
@@ -170,12 +172,21 @@
                 }
               }
             }
-          }
+           }
 
           $("div#info-engine").html(info_data+"<br/><br/>");
+        },
+        error: function(data, textstatus, errorThrown){
+          info_data= "Oper status: <b>ERROR</b><br/>";
+          info_data+= "Reason: <b>"+data.responseText+"</b></br>"
+          $("div#info-engine").html(info_data+"<br/><br/>");
         }
-      });
-    });
+      }
+      );
+
+    }catch(e){}
+    }
+    );
 
     // Delete engine modal
     $("#modal-delete-engine").on('show.bs.modal', function (e) {
