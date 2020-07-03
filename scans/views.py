@@ -16,6 +16,7 @@ from .utils import _update_celerybeat, _run_scan
 from engines.models import Engine, EnginePolicy, EngineInstance, EnginePolicyScope
 from findings.models import RawFinding
 from assets.models import Asset, AssetGroup
+from events.models import Event
 
 from datetime import timedelta, datetime
 # from pytz import timezone
@@ -45,13 +46,15 @@ def detail_scan_view(request, scan_id):
             if fil.startswith("\""):
                 fil = fil.lstrip('"')
                 fil = fil.rstrip('"')
-            if fil.startswith("assets:") or fil.startswith("a:") or fil.startswith("assets.value:") or fil.startswith("a.value:"):
+            if fil.startswith("assets:") or fil.startswith("a:") or fil.startswith("assets.value:") or fil.startswith(
+                    "a.value:"):
                 assets_filters.update({"value__icontains": fil.split(':')[1]})
             elif fil.startswith("asset.criticity:") or fil.startswith("a.criticity:"):
                 assets_filters.update({"criticity__icontains": fil.split(':')[1]})
             elif fil.startswith("asset.type:") or fil.startswith("a.type:"):
                 assets_filters.update({"type__icontains": fil.split(':')[1]})
-            elif fil.startswith("finding:") or fil.startswith("f:") or fil.startswith("finding.title:") or fil.startswith("f.title:"):
+            elif fil.startswith("finding:") or fil.startswith("f:") or fil.startswith(
+                    "finding.title:") or fil.startswith("f.title:"):
                 findings_filters.update({"title__icontains": fil.split(':')[1]})
             elif fil.startswith("finding.status:") or fil.startswith("f.status:"):
                 findings_filters.update({"status__icontains": fil.split(':')[1]})
@@ -83,10 +86,14 @@ def detail_scan_view(request, scan_id):
 
     # Search raw findings related to the asset
     if findings_filters == {}:
-        raw_findings = RawFinding.objects.filter(scan=scan).only("id", "asset_name", "title", "severity", "status").order_by('asset', 'severity', 'type', 'title')
+        raw_findings = RawFinding.objects.filter(scan=scan).only("id", "asset_name", "title", "severity",
+                                                                 "status").order_by('asset', 'severity', 'type',
+                                                                                    'title')
     else:
         findings_filters.update({"scan": scan})
-        raw_findings = RawFinding.objects.filter(**findings_filters).only("id", "asset_name", "title", "severity", "status").order_by('asset', 'severity', 'type', 'title')
+        raw_findings = RawFinding.objects.filter(**findings_filters).only("id", "asset_name", "title", "severity",
+                                                                          "status").order_by('asset', 'severity',
+                                                                                             'type', 'title')
 
     # Generate summary info on assets (for progress bars)
     summary_assets = {}
@@ -121,12 +128,15 @@ def detail_scan_view(request, scan_id):
             })
 
     # Generate findings stats
-    month_ago = datetime.today()-timedelta(days=30)
+    month_ago = datetime.today() - timedelta(days=30)
     findings_stats = {
         "count": raw_findings.count(),
         "cvss_gte_70": raw_findings.filter(risk_info__cvss_base_score__gte=7.0).count(),
-        "pubdate_30d": raw_findings.filter(risk_info__vuln_publication_date__lte=month_ago.strftime('%Y/%m/%d')).count(),
-        "cvss_gte_70_pubdate_30d": raw_findings.filter(risk_info__cvss_base_score__gte=7.0, risk_info__vuln_publication_date__lte=month_ago.strftime('%Y/%m/%d')).count()
+        "pubdate_30d": raw_findings.filter(
+            risk_info__vuln_publication_date__lte=month_ago.strftime('%Y/%m/%d')).count(),
+        "cvss_gte_70_pubdate_30d": raw_findings.filter(risk_info__cvss_base_score__gte=7.0,
+                                                       risk_info__vuln_publication_date__lte=month_ago.strftime(
+                                                           '%Y/%m/%d')).count()
     }
 
     # Pagination of assets
@@ -151,7 +161,10 @@ def detail_scan_view(request, scan_id):
         scan_findings = paginator_findings.page(paginator_findings.num_pages)
 
     # Pagination of events
-    scan_events = scan.event_set.all().order_by('-id')
+    # scan_events = scan.event_set.all().order_by('-id')
+    scan_events = Event.objects.filter(scan=scan).order_by('-id')
+    # scan_events = scan.event_scan.all()
+
     paginator_events = Paginator(scan_events, 50)
     page_event = request.GET.get('p_events', None)
     try:
@@ -177,9 +190,9 @@ def list_scans_view(request):
     """List performed scans."""
     scan_list = Scan.objects.all().annotate(
         scan_def_id=F("scan_definition__id"), eng_type=F("engine_type__name")
-        ).only(
+    ).only(
         "engine_type", "title", "status", "summary", "updated_at"
-        ).order_by('-finished_at')
+    ).order_by('-finished_at')
 
     paginator = Paginator(scan_list, 10)
     page = request.GET.get('page')
@@ -195,7 +208,8 @@ def list_scans_view(request):
 # Scan Definitions
 def list_scan_def_view(request):
     scans = Scan.objects.all()
-    scan_defs_all = ScanDefinition.objects.all().order_by('-updated_at').annotate(scan_count=Count('scan')).annotate(engine_type_name=F('engine_type__name'))
+    scan_defs_all = ScanDefinition.objects.all().order_by('-updated_at').annotate(scan_count=Count('scan')).annotate(
+        engine_type_name=F('engine_type__name'))
 
     # Pagination of findings
     nb_items = int(request.GET.get('n', 50))
@@ -220,8 +234,8 @@ def delete_scan_def_view(request, scan_def_id):
             try:
                 periodic_task = scan_definition.periodic_task
                 if periodic_task:
-                    periodic_task.enabled = False   # maybe useless
-                    periodic_task.save()            # maybe useless
+                    periodic_task.enabled = False  # maybe useless
+                    periodic_task.save()  # maybe useless
                     periodic_task.delete()
                     _update_celerybeat()
             except PeriodicTask.DoesNotExist:
@@ -243,7 +257,8 @@ def add_scan_def_view(request):
     scan_cats = EnginePolicyScope.objects.all().order_by('name').values()
     scan_policies = EnginePolicy.objects.all().prefetch_related("engine", "scopes").order_by(Lower('name'))
     scan_engines = Engine.objects.all().exclude(name__in=["MANUAL", "SKELETON"]).order_by('name').values()
-    scan_engines_json = json.dumps(list(EngineInstance.objects.all().values('id', 'name', 'engine__name', 'engine__id')))
+    scan_engines_json = json.dumps(
+        list(EngineInstance.objects.all().values('id', 'name', 'engine__name', 'engine__id')))
 
     scan_policies_json = []
     for p in scan_policies:
@@ -253,7 +268,6 @@ def add_scan_def_view(request):
             "name": p.name,
             "scopes": list(p.scopes.values_list("id", flat=True)),
         })
-
 
     if request.method == 'GET' or ScanDefinitionForm(request.POST).errors:
         form = ScanDefinitionForm()
@@ -388,7 +402,8 @@ def edit_scan_def_view(request, scan_def_id):
     scan_cats = EnginePolicyScope.objects.all().values()
     scan_policies = list(EnginePolicy.objects.all().prefetch_related("engine", "scopes"))
     scan_engines = Engine.objects.all().exclude(name__in=["MANUAL", "SKELETON"]).values()
-    scan_engines_json = json.dumps(list(EngineInstance.objects.all().values('id', 'name', 'engine__name', 'engine__id')))
+    scan_engines_json = json.dumps(
+        list(EngineInstance.objects.all().values('id', 'name', 'engine__name', 'engine__id')))
 
     scan_policies_json = []
     for p in scan_policies:
@@ -459,7 +474,8 @@ def edit_scan_def_view(request, scan_def_id):
                     "engine_name": str(scan_definition.engine_type.name).lower(),
                     "owner_id": request_user_id,
                 }
-                if form.cleaned_data['engine'] is not None and form.data['engine'] != '' and int(form.data['engine']) > 0:
+                if form.cleaned_data['engine'] is not None and form.data['engine'] != '' and int(
+                        form.data['engine']) > 0:
                     parameters.update({
                         "engine_id": EngineInstance.objects.get(id=form.data['engine']).id,
                         "scan_params": {
@@ -477,7 +493,7 @@ def edit_scan_def_view(request, scan_def_id):
                     name=task_title,
                     task='engines.tasks.start_periodic_scan_task',
                     args=json.dumps([parameters]),
-                    #expires=datetime.utcnow() + timedelta(seconds=30),
+                    # expires=datetime.utcnow() + timedelta(seconds=30),
                     queue='scan',
                     last_run_at=None,
                 )
@@ -532,7 +548,7 @@ def compare_scans_view(request):
     scan_b_missing_findings = list(
         scan_a.rawfinding_set.all().values_list("id", flat=True).exclude(
             hash__in=scan_b.rawfinding_set.values_list('hash'))
-        )
+    )
 
     return render(request, 'compare-scans.html', {
         'scan_a': scan_a,

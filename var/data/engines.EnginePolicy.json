@@ -1002,4 +1002,26 @@
     "updated_at": "2019-11-29T10:37:32.713Z",
     "scopes": [4]
   }
+}, {
+  "model": "engines.enginepolicy",
+  "pk": 58,
+  "fields": {
+    "engine": 23,
+    "owner": 1,
+    "name": "full",
+    "default": false,
+    "description": "TESTSSL TLS scanner",
+    "options": {
+      "check_protocols": true,
+      "check_certificat": true,
+      "check_vulnerabilities": true,
+      "check_ciphers": true
+    },
+    "file": "",
+    "status": "",
+    "is_default": false,
+    "created_at": "2019-11-29T10:37:32.657Z",
+    "updated_at": "2019-11-29T10:37:32.713Z",
+    "scopes": [4]
+  }
 }]
